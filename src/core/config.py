@@ -33,6 +33,7 @@ except ImportError:
 PROVIDER_OPENAI = "openai"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENROUTER = "openrouter"
+PROVIDER_DEEPSEEK = "deepseek"
 
 # --- Blue Team (LOCKED) ---
 BLUE_PROVIDER = PROVIDER_OPENROUTER
@@ -43,6 +44,8 @@ DEFAULT_OPENROUTER_MODEL = BLUE_MODEL  # alias
 # --- Red Team ---
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 # Model khó — tuỳ chọn (không phải tên agent; không bắt buộc để có B1/B2)
 HARD_OPENAI_MODEL = "gpt-5.6-luna"
 HARD_GEMINI_MODEL = "gemini-3.8-flash"
@@ -128,7 +131,7 @@ def blue_provider_label() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Red Team — openai | gemini
+# Red Team — openai | gemini | deepseek
 # ---------------------------------------------------------------------------
 
 def get_red_provider() -> str:
@@ -139,15 +142,23 @@ def get_red_provider() -> str:
     ).strip().lower()
     if raw in {"gemini", "google", "adk"}:
         return PROVIDER_GEMINI
+    if raw in {"deepseek"}:
+        return PROVIDER_DEEPSEEK
     return PROVIDER_OPENAI
 
 
 def get_red_model() -> str:
     """Model Red Team từ .env (cùng cho default + advance)."""
-    if get_red_provider() == PROVIDER_GEMINI:
+    prov = get_red_provider()
+    if prov == PROVIDER_GEMINI:
         return (
             os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip()
             or DEFAULT_GEMINI_MODEL
+        )
+    if prov == PROVIDER_DEEPSEEK:
+        return (
+            os.environ.get("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL).strip()
+            or DEFAULT_DEEPSEEK_MODEL
         )
     return (
         os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip()
@@ -169,8 +180,32 @@ def get_openai_api_key() -> str:
     return os.environ.get("OPENAI_API_KEY", "").strip()
 
 
+def get_deepseek_api_key() -> str:
+    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if key and key != "your_deepseek_api_key_here":
+        return key
+    if get_red_provider() == PROVIDER_DEEPSEEK or "deepseek" in os.environ.get("OPENAI_BASE_URL", "").lower():
+        fallback = os.environ.get("OPENAI_API_KEY", "").strip()
+        if fallback and not fallback.startswith("your_"):
+            return fallback
+    return ""
+
+
 def red_openai_client_kwargs() -> dict:
-    return {"api_key": get_openai_api_key() or None}
+    if get_red_provider() == PROVIDER_DEEPSEEK:
+        base_url = (
+            os.environ.get("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL).strip()
+            or DEEPSEEK_BASE_URL
+        )
+        return {
+            "api_key": get_deepseek_api_key() or None,
+            "base_url": base_url,
+        }
+    kwargs = {"api_key": get_openai_api_key() or None}
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
+    if base_url:
+        kwargs["base_url"] = base_url
+    return kwargs
 
 
 def red_provider_label(tier: str = "advance") -> str:
@@ -180,7 +215,7 @@ def red_provider_label(tier: str = "advance") -> str:
 
 
 def red_uses_openai_sdk() -> bool:
-    return get_red_provider() == PROVIDER_OPENAI
+    return get_red_provider() in {PROVIDER_OPENAI, PROVIDER_DEEPSEEK}
 
 
 def red_uses_gemini() -> bool:
@@ -228,14 +263,16 @@ def is_harder_model() -> bool:
         "gemini-3.7-flash",
         "gemini-3.6-flash",
         "gemini-2.5-pro",
+        "deepseek-chat",
+        "deepseek-reasoner",
     }
     if m in hard:
         return True
-    return any(x in m for x in ("gpt-5.6", "pro", "gemini-3.8", "gemini-3.7"))
+    return any(x in m for x in ("gpt-5.6", "pro", "gemini-3.8", "gemini-3.7", "deepseek"))
 
 
 def setup_api_key():
-    """Ensure keys for Blue (OpenRouter) + Red / Red Advance (OpenAI or Gemini)."""
+    """Ensure keys for Blue (OpenRouter) + Red / Red Advance (OpenAI or Gemini or DeepSeek)."""
     if not get_openrouter_api_key():
         os.environ["OPENROUTER_API_KEY"] = input(
             "Enter OpenRouter API Key (Blue): "
@@ -249,6 +286,10 @@ def setup_api_key():
             os.environ["GOOGLE_API_KEY"] = input("Enter Google API Key (Red): ").strip()
         os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "0"
         print(f"Red / Red Advance  — gemini:{model}")
+    elif red == PROVIDER_DEEPSEEK:
+        if not get_deepseek_api_key():
+            os.environ["DEEPSEEK_API_KEY"] = input("Enter DeepSeek API Key (Red): ").strip()
+        print(f"Red / Red Advance  — deepseek:{model}")
     else:
         if not get_openai_api_key():
             os.environ["OPENAI_API_KEY"] = input("Enter OpenAI API Key (Red): ").strip()
